@@ -32,10 +32,10 @@ def _do_generate_c_source(args):
         not args.no_floating_point_numbers,
         args.bit_fields)
 
-    with open(filename_h, 'w') as fout:
+    with open(filename_h, 'w', encoding=args.encoding) as fout:
         fout.write(header)
 
-    with open(filename_c, 'w') as fout:
+    with open(filename_c, 'w', encoding=args.encoding) as fout:
         fout.write(source)
 
     print('Successfully generated {} and {}.'.format(filename_h, filename_c))

@@ -74,7 +74,7 @@ def _load_file_cache(filename,
                      frame_id_mask,
                      strict,
                      cache_dir):
-    with open(filename, 'rb') as fin:
+    with open(filename, 'rb', encoding=encoding) as fin:
         key = fin.read()
 
     cache = diskcache.Cache(cache_dir)

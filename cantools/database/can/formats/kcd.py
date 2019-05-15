@@ -130,7 +130,8 @@ def _load_signal_element(signal, nodes):
                                                   receiver.attrib['id']))
 
     return Signal(name=name,
-                  start=_start_bit(offset, byte_order),
+                  #start=_start_bit(offset, byte_order),
+                  start = offset,
                   length=length,
                   receivers=receivers,
                   byte_order=byte_order,

@@ -520,7 +520,8 @@ class Signal(object):
 
     def __init__(self, signal):
         self._signal = signal
-        self.snake_name = camel_to_snake_case(self.name)
+        #self.snake_name = camel_to_snake_case(self.name)
+        self.snake_name = self.name
 
     def __getattr__(self, name):
         return getattr(self._signal, name)
@@ -721,7 +722,8 @@ class Message(object):
 
     def __init__(self, message):
         self._message = message
-        self.snake_name = camel_to_snake_case(self.name)
+        #self.snake_name = camel_to_snake_case(self.name)
+        self.snake_name = self.name
         self.signals = [Signal(signal)for signal in message.signals]
 
     def __getattr__(self, name):
