@@ -62,6 +62,8 @@ def _load_signal_element(signal, nodes):
     notes = None
     receivers = []
     decimal = SignalDecimal(Decimal(slope), Decimal(intercept))
+    propid = 0
+    areaId = 0
     
     # Signal XML attributes.
     for key, value in signal.attrib.items():
@@ -73,6 +75,10 @@ def _load_signal_element(signal, nodes):
             length = int(value)
         elif key == 'endianess':
             byte_order = '{}_endian'.format(value)
+        elif key == 'propertyId':
+            propid = int(value)
+        elif key == 'ereaId':
+            areaId = int(value)
         else:
             LOGGER.debug("Ignoring unsupported signal attribute '%s'.", key)
 
@@ -144,7 +150,8 @@ def _load_signal_element(signal, nodes):
                   choices=labels,
                   comment=notes,
                   is_float=is_float,
-                  decimal=decimal)
+                  decimal=decimal,
+                  propertyid=propid)
 
 
 def _load_multiplex_element(mux, nodes):

@@ -43,6 +43,8 @@ HEADER_FMT = '''\
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <map>
+#include "include/CanNetworkInterface.h"
 
 #ifndef EINVAL
 #    define EINVAL 22
@@ -52,6 +54,7 @@ HEADER_FMT = '''\
 {choices_defines}
 {structs}
 {declarations}
+{pack_unpack_defines}
 #endif
 '''
 
@@ -92,6 +95,7 @@ SOURCE_FMT = '''\
 
 {helpers}\
 {definitions}\
+{pack_unpack_bodys}\
 '''
 
 FUZZER_SOURCE_FMT = '''\
@@ -419,32 +423,30 @@ static inline {var_type} unpack_right_shift_u{length}(
 DEFINITION_FMT = '''\
 int {database_name}_{message_name}_pack(
     uint8_t *dst_p,
-    const struct {database_name}_{message_name}_t *src_p,
     size_t size)
 {{
+    struct {database_name}_{message_name}_t src;
 {unused}\
 {pack_variables}\
     if (size < {message_length}u) {{
         return (-EINVAL);
     }}
 
-    memset(&dst_p[0], 0, {message_length});
 {pack_body}
     return ({message_length});
 }}
 
 int {database_name}_{message_name}_unpack(
-    struct {database_name}_{message_name}_t *dst_p,
     const uint8_t *src_p,
     size_t size)
 {{
+    struct {database_name}_{message_name}_t dst;
 {unused}\
 {unpack_variables}\
     if (size < {message_length}u) {{
         return (-EINVAL);
     }}
 
-    memset(dst_p, 0, sizeof(*dst_p));
 {unpack_body}
     return (0);
 }}
@@ -515,6 +517,70 @@ SIGNAL_MEMBER_FMT = '''\
     {type_name} {name}{length};\
 '''
 
+PACK_UNPACK_DEFINES ='''\
+struct Property{{
+    int propId;
+    int areaId;
+    Property(int prop, int area) {{
+        propId = prop;
+        areaId = area;
+    }}
+}};
+
+bool operator <(Property a, Property b) {{
+    return a.propId < b.propId ? true : (a.propId == b.propId ? a.areaId < b.areaId : false);
+}}
+
+typedef int(*PackFunction)(uint8_t*, size_t);
+typedef int(*UnpackFunction)(const uint8_t*, size_t);\
+'''
+
+PACK_UNPACK_BODYS ='''\
+std::map<Property, int> MessageMapCreator(){{
+    std::map<Property, int> temp;
+{message_maps}
+    return temp;
+}}
+std::map<Property, int> messageMap=MessageMapCreator();
+
+static std::map<Property, PackFunction> PackMapCreator() {{
+    std::map<Property, PackFunction> temp;
+{pack_maps}
+    return temp;
+}}
+std::map<Property, PackFunction> packFunctionMap=PackMapCreator();
+void set_property_to_network(int propId, int areaId){{
+    uint8_t bytes[8];
+    Property key = Property(propId, areaId);
+    std::map<Property, PackFunction>::iterator iter = packFunctionMap.find(key);
+    std::map<Property, int>::iterator msgIter = messageMap.find(key);
+    if ((iter != packFunctionMap.end()) && (msgIter != messageMap.end()))
+    {{
+        PackFunction func = iter->second;
+        int msgId = msgIter->second;
+        if(func != NULL){{
+            int len = func(bytes, 8);
+            send_message_to_mcu(msgId, bytes, len);
+        }}
+    }}
+}}
+
+static std::map<int, UnpackFunction> UnpackMapCreator() {{
+    std::map<int, UnpackFunction> temp;
+{unpack_maps}
+    return temp;
+}}
+std::map<int, UnpackFunction> unpackFunctionMap=UnpackMapCreator();
+void pass_and_dispatch_signal(int msgId, uint8_t bytes[], int length){{
+    std::map<int, UnpackFunction>::iterator iter = unpackFunctionMap.find(msgId);
+    if(iter != unpackFunctionMap.end()){{
+        UnpackFunction func = iter->second;
+        if(func != NULL){{
+            func(bytes, length);
+        }}
+    }}
+}}\
+'''
 
 class Signal(object):
 
@@ -525,6 +591,10 @@ class Signal(object):
 
     def __getattr__(self, name):
         return getattr(self._signal, name)
+
+    @property
+    def property_id(self):
+        return self._signal.property_id
 
     @property
     def unit(self):
@@ -891,15 +961,19 @@ def _format_pack_code_signal(message,
                              helper_kinds):
     signal = message.get_signal_by_name(signal_name)
 
+    fmt_dispatch = '    get_signal_value_from_service({}, {}, src.{});'
+    dispatch_line = fmt_dispatch.format(signal.property_id, signal.area_id ,signal.snake_name)
+    body_lines.append(dispatch_line)
+
     if signal.is_float or signal.is_signed:
         variable = '    uint{}_t {};'.format(signal.type_length,
                                              signal.snake_name)
 
         if signal.is_float:
-            conversion = '    memcpy(&{0}, &src_p->{0}, sizeof({0}));'.format(
+            conversion = '    memcpy(&{0}, &src.{0}, sizeof({0}));'.format(
                 signal.snake_name)
         else:
-            conversion = '    {0} = (uint{1}_t)src_p->{0};'.format(
+            conversion = '    {0} = (uint{1}_t)src.{0};'.format(
                 signal.snake_name,
                 signal.type_length)
 
@@ -910,7 +984,7 @@ def _format_pack_code_signal(message,
         if signal.is_float or signal.is_signed:
             fmt = '    dst_p[{}] |= pack_{}_shift_u{}({}, {}u, 0x{:02x}u);'
         else:
-            fmt = '    dst_p[{}] |= pack_{}_shift_u{}(src_p->{}, {}u, 0x{:02x}u);'
+            fmt = '    dst_p[{}] |= pack_{}_shift_u{}(src.{}, {}u, 0x{:02x}u);'
 
         line = fmt.format(index,
                           shift_direction,
@@ -1024,7 +1098,7 @@ def _format_unpack_code_signal(message,
         if signal.is_float or signal.is_signed:
             fmt = '    {} |= unpack_{}_shift_u{}(src_p[{}], {}u, 0x{:02x}u);'
         else:
-            fmt = '    dst_p->{} |= unpack_{}_shift_u{}(src_p[{}], {}u, 0x{:02x}u);'
+            fmt = '    dst.{} |= unpack_{}_shift_u{}(src_p[{}], {}u, 0x{:02x}u);'
 
         line = fmt.format(signal.snake_name,
                           shift_direction,
@@ -1036,7 +1110,7 @@ def _format_unpack_code_signal(message,
         helper_kinds.add((shift_direction, signal.type_length))
 
     if signal.is_float:
-        conversion = '    memcpy(&dst_p->{0}, &{0}, sizeof(dst_p->{0}));'.format(
+        conversion = '    memcpy(&dst.{0}, &{0}, sizeof(dst.{0}));'.format(
             signal.snake_name)
         body_lines.append(conversion)
     elif signal.is_signed:
@@ -1050,10 +1124,13 @@ def _format_unpack_code_signal(message,
                                                   suffix=signal.conversion_type_suffix)
             body_lines.extend(formatted.splitlines())
 
-        conversion = '    dst_p->{0} = (int{1}_t){0};'.format(signal.snake_name,
+        conversion = '    dst.{0} = (int{1}_t){0};'.format(signal.snake_name,
                                                               signal.type_length)
         body_lines.append(conversion)
 
+    fmt_dispatch = '    dispatch_signal_to_service({}, {}, dst.{});'
+    dispatch_line = fmt_dispatch.format(signal.property_id, signal.area_id ,signal.snake_name)
+    body_lines.append(dispatch_line)
 
 def _format_unpack_code_level(message,
                               signal_names,
@@ -1327,6 +1404,33 @@ def _generate_declarations(database_name, messages, floating_point_numbers):
 
     return '\n'.join(declarations)
 
+def _generate_pack_unpack(database_name, messages):
+    pack_unpack_defines = PACK_UNPACK_DEFINES.format()
+    pack_unpack_bodys = ''
+    pack_maps = []
+    unpck_maps = []
+    message_maps = []
+
+    for message in messages:
+        unpack_map_item = '    temp.insert(std::pair<int, UnpackFunction>({}, {}_{}_unpack));'.format(message.frame_id,
+                                                                                                  database_name,
+                                                                                                  message.snake_name)
+        unpck_maps.append(unpack_map_item)
+        for signal in message.signals:
+            pack_maps_item = '    temp.insert(std::pair<Property, PackFunction>(Property({}, {}), {}_{}_pack));'.format(signal.property_id,
+                                                                                                   signal.area_id,
+                                                                                                   database_name,
+                                                                                                   message.snake_name)
+            pack_maps.append(pack_maps_item)
+            message_map_item = '    temp.insert(std::pair<Property, int>(Property({}, {}), {}));'.format(signal.property_id,
+                                                                                                     signal.area_id,
+                                                                                                     message.frame_id)
+            message_maps.append(message_map_item)
+
+    pack_unpack_bodys = PACK_UNPACK_BODYS.format(message_maps='\n'.join(message_maps),
+                             pack_maps='\n'.join(pack_maps),
+                             unpack_maps='\n'.join(unpck_maps))
+    return pack_unpack_defines, pack_unpack_bodys
 
 def _generate_definitions(database_name, messages, floating_point_numbers):
     definitions = []
@@ -1498,6 +1602,7 @@ def generate(database,
     frame_id_defines = _generate_frame_id_defines(database_name, messages)
     choices_defines = _generate_choices_defines(database_name, messages)
     structs = _generate_structs(database_name, messages, bit_fields)
+    pack_unpack_defines, pack_unpack_bodys=_generate_pack_unpack(database_name, messages)
     declarations = _generate_declarations(database_name,
                                           messages,
                                           floating_point_numbers)
@@ -1512,13 +1617,15 @@ def generate(database,
                                frame_id_defines=frame_id_defines,
                                choices_defines=choices_defines,
                                structs=structs,
-                               declarations=declarations)
+                               declarations=declarations,
+                               pack_unpack_defines=pack_unpack_defines)
 
     source = SOURCE_FMT.format(version=__version__,
                                date=date,
                                header=header_name,
                                helpers=helpers,
-                               definitions=definitions)
+                               definitions=definitions,
+                               pack_unpack_bodys=pack_unpack_bodys)
 
     fuzzer_source, fuzzer_makefile = _generate_fuzzer_source(
         database_name,

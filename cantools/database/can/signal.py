@@ -124,7 +124,9 @@ class Signal(object):
                  multiplexer_ids=None,
                  multiplexer_signal=None,
                  is_float=False,
-                 decimal=None):
+                 decimal=None,
+                 propertyid=0,
+                 areaId=0):
         self._name = name
         self._start = start
         self._length = length
@@ -145,6 +147,20 @@ class Signal(object):
         self._multiplexer_ids = multiplexer_ids
         self._multiplexer_signal = multiplexer_signal
         self._is_float = is_float
+        self._property_id = propertyid
+        self._area_id = areaId
+
+    @property
+    def property_id(self):
+        """The correspend propertyID of the signal as a int
+        """
+        return self._property_id
+
+    @property
+    def area_id(self):
+        """The correspend AreaID of the signal as a int
+        """
+        return self._area_id
 
     @property
     def name(self):
